@@ -34,8 +34,8 @@ class ReminderApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Reminders")
-        self.root.geometry("600x400")
-        self.root.minsize(500, 300)
+        self.root.geometry("900x500")  # Increased width for side panel
+        self.root.minsize(800, 400)    # Increased minimum size
         
         # Configure the app to run in system tray when closed
         self.root.protocol("WM_DELETE_WINDOW", self.hide_window)
@@ -43,6 +43,9 @@ class ReminderApp:
         # Create a small tray-like window (initially hidden)
         self.tray_window = None
         self.is_hidden = False
+        
+        # Side panel state
+        self.side_panel_visible = True
         
         # Data file path
         self.data_file = "reminders.json"
@@ -111,22 +114,42 @@ class ReminderApp:
         # Configure grid weights
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=1)
+        main_frame.columnconfigure(0, weight=2)  # Main content gets more space
+        main_frame.columnconfigure(1, weight=1)  # Side panel gets less space
         main_frame.rowconfigure(1, weight=1)
         
-        # Title
-        title_font = font.Font(size=16, weight="bold")
-        title_label = ttk.Label(main_frame, text="Reminders", font=title_font)
-        title_label.grid(row=0, column=0, pady=(0, 20))
+        # Title and toggle button frame
+        title_frame = ttk.Frame(main_frame)
+        title_frame.grid(row=0, column=0, columnspan=2, pady=(0, 20), sticky=(tk.W, tk.E))
+        title_frame.columnconfigure(0, weight=1)
         
-        # Reminders list frame
-        list_frame = ttk.Frame(main_frame)
-        list_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        title_font = font.Font(size=16, weight="bold")
+        title_label = ttk.Label(title_frame, text="Reminders", font=title_font)
+        title_label.grid(row=0, column=0, sticky=tk.W)
+        
+        # Toggle side panel button
+        self.toggle_button = ttk.Button(title_frame, text="◀ Hide History", 
+                                      command=self.toggle_side_panel, width=14)
+        self.toggle_button.grid(row=0, column=1, sticky=tk.E, padx=(10, 0))
+        
+        # Create horizontal paned window to split main content and side panel
+        self.paned_window = ttk.PanedWindow(main_frame, orient=tk.HORIZONTAL)
+        self.paned_window.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Left panel - Reminders list frame
+        list_frame = ttk.Frame(self.paned_window)
+        self.paned_window.add(list_frame, weight=2)
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
         
+        # Right panel - Progress history side window
+        self.side_frame = ttk.LabelFrame(self.paned_window, text="📊 Progress History", padding="10")
+        self.paned_window.add(self.side_frame, weight=1)
+        self.side_frame.columnconfigure(0, weight=1)
+        self.side_frame.rowconfigure(1, weight=1)
+        
         # Create treeview for reminders
-        columns = ("S.No", "Title", "Due Date", "Due Time", "Status")
+        columns = ("S.No", "Title", "Due Date", "Due Time", "Status", "Progress")
         self.tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
         
         # Define column headings and widths
@@ -135,12 +158,17 @@ class ReminderApp:
         self.tree.heading("Due Date", text="Due Date")
         self.tree.heading("Due Time", text="Due Time")
         self.tree.heading("Status", text="Status")
+        self.tree.heading("Progress", text="Progress")
         
         self.tree.column("S.No", width=50, minwidth=40)
-        self.tree.column("Title", width=220, minwidth=150)
+        self.tree.column("Title", width=200, minwidth=150)
         self.tree.column("Due Date", width=100, minwidth=80)
         self.tree.column("Due Time", width=100, minwidth=80)
         self.tree.column("Status", width=80, minwidth=60)
+        self.tree.column("Progress", width=70, minwidth=60)
+        
+        # Bind tree selection to update side panel
+        self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
         
         # Scrollbar for treeview
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
@@ -150,12 +178,21 @@ class ReminderApp:
         self.tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
         
+        # Create side panel content
+        self.create_side_panel()
+        
         # Buttons frame
         buttons_frame = ttk.Frame(main_frame)
-        buttons_frame.grid(row=2, column=0, pady=(10, 0), sticky=(tk.W, tk.E))
+        buttons_frame.grid(row=2, column=0, columnspan=2, pady=(10, 0), sticky=(tk.W, tk.E))
+        
+        # Info label
+        info_label = ttk.Label(buttons_frame, text="💡 Select a task and click Update to track progress", 
+                              font=("Arial", 8), foreground="gray")
+        info_label.pack(side=tk.LEFT, padx=(0, 10))
         
         # Buttons
         ttk.Button(buttons_frame, text="✅ Mark Complete", command=self.mark_complete).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(buttons_frame, text="📝 Update Progress", command=self.update_task_progress).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(buttons_frame, text="🗑️ Delete", command=self.delete_reminder).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(buttons_frame, text="🔄 Refresh", command=self.refresh_list).pack(side=tk.LEFT)
         
@@ -164,6 +201,177 @@ class ReminderApp:
         
         # Populate the list
         self.refresh_list()
+        
+        # Set up keyboard shortcuts
+        self.root.bind('<Control-p>', lambda e: self.toggle_side_panel())
+    
+    def toggle_side_panel(self):
+        """Toggle visibility of the progress history side panel"""
+        if self.side_panel_visible:
+            # Hide the side panel
+            self.paned_window.forget(self.side_frame)
+            self.toggle_button.config(text="▶ Show History")
+            self.side_panel_visible = False
+            
+            # Adjust window size for better experience when panel is hidden
+            current_geometry = self.root.geometry()
+            width, height = current_geometry.split('x')[0], current_geometry.split('x')[1].split('+')[0]
+            if int(width) > 700:  # Only adjust if window is large enough
+                new_width = max(600, int(width) - 200)  # Reduce width but keep minimum
+                self.root.geometry(f"{new_width}x{height}")
+        else:
+            # Show the side panel
+            self.paned_window.add(self.side_frame, weight=1)
+            self.toggle_button.config(text="◀ Hide History")
+            self.side_panel_visible = True
+            
+            # Restore wider window when panel is shown
+            current_geometry = self.root.geometry()
+            width, height = current_geometry.split('x')[0], current_geometry.split('x')[1].split('+')[0]
+            if int(width) < 800:  # Only adjust if window is narrow
+                new_width = max(900, int(width) + 200)  # Increase width
+                self.root.geometry(f"{new_width}x{height}")
+            
+            # Update the side panel content if a task is selected
+            selection = self.tree.selection()
+            if selection:
+                item = selection[0]
+                index = self.tree.index(item)
+                if index < len(self.reminders):
+                    sorted_reminders = sorted(self.reminders, key=lambda x: f"{x['due_date']} {x['due_time']}")
+                    self.update_history_panel(sorted_reminders[index])
+    
+    def create_side_panel(self):
+        """Create the progress history side panel"""
+        # Header for selected task
+        self.selected_task_label = ttk.Label(self.side_frame, text="Select a task to view progress history", 
+                                           font=("Arial", 10), foreground="gray")
+        self.selected_task_label.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        # Progress history tree
+        history_columns = ("Date", "Progress", "Comments")
+        self.history_tree = ttk.Treeview(self.side_frame, columns=history_columns, 
+                                       show="tree headings", height=12)
+        
+        # Configure column headings
+        self.history_tree.heading("#0", text="Timeline")
+        self.history_tree.heading("Date", text="Date/Time")
+        self.history_tree.heading("Progress", text="Progress")
+        self.history_tree.heading("Comments", text="Comments")
+        
+        # Configure column widths
+        self.history_tree.column("#0", width=30, minwidth=30)
+        self.history_tree.column("Date", width=120, minwidth=100)
+        self.history_tree.column("Progress", width=60, minwidth=50)
+        self.history_tree.column("Comments", width=200, minwidth=150)
+        
+        # History tree scrollbar
+        history_scrollbar = ttk.Scrollbar(self.side_frame, orient=tk.VERTICAL, 
+                                        command=self.history_tree.yview)
+        self.history_tree.configure(yscrollcommand=history_scrollbar.set)
+        
+        # Grid history tree and scrollbar
+        self.history_tree.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        history_scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))
+        
+        # Configure tree tags for styling
+        self.history_tree.tag_configure("date_group", background="#f0f8ff", foreground="darkblue")
+        self.history_tree.tag_configure("update_item", background="white", foreground="darkgreen")
+        self.history_tree.tag_configure("high_progress", foreground="green", font=("Arial", 9, "bold"))
+        self.history_tree.tag_configure("medium_progress", foreground="orange")
+        self.history_tree.tag_configure("low_progress", foreground="red")
+        
+        # Progress summary
+        self.progress_summary = ttk.Label(self.side_frame, text="", font=("Arial", 9), 
+                                        foreground="darkblue")
+        self.progress_summary.grid(row=2, column=0, columnspan=2, pady=(10, 0), sticky=(tk.W))
+        
+    def update_history_panel(self, reminder=None):
+        """Update the progress history side panel"""
+        # Clear existing items
+        for item in self.history_tree.get_children():
+            self.history_tree.delete(item)
+            
+        if not reminder:
+            self.selected_task_label.config(text="Select a task to view progress history", 
+                                          foreground="gray")
+            self.progress_summary.config(text="")
+            return
+            
+        # Update header
+        task_title = reminder["title"][:30] + "..." if len(reminder["title"]) > 30 else reminder["title"]
+        self.selected_task_label.config(text=f"📋 {task_title}", foreground="black")
+        
+        # Update progress summary
+        current_progress = reminder.get("progress", 0)
+        updates_count = len(reminder.get("updates", []))
+        created_date = datetime.fromisoformat(reminder["created"]).strftime("%m/%d/%Y")
+        
+        summary_text = f"Progress: {current_progress}/10 • Updates: {updates_count} • Created: {created_date}"
+        self.progress_summary.config(text=summary_text)
+        
+        # Add progress history to tree
+        updates = reminder.get("updates", [])
+        if not updates:
+            # Show creation entry
+            creation_item = self.history_tree.insert("", tk.END, 
+                                                    text="📝", 
+                                                    values=(created_date, "0/10", "Task created"))
+            return
+            
+        # Group updates by date
+        updates_by_date = {}
+        for update in updates:
+            try:
+                timestamp = datetime.fromisoformat(update["timestamp"])
+                date_key = timestamp.strftime("%Y-%m-%d")
+                
+                if date_key not in updates_by_date:
+                    updates_by_date[date_key] = []
+                    
+                updates_by_date[date_key].append({
+                    "time": timestamp.strftime("%H:%M"),
+                    "full_datetime": timestamp.strftime("%m/%d %H:%M"),
+                    "progress": update.get("progress", 0),
+                    "comment": update.get("comment", "").strip() or "Progress updated",
+                    "timestamp": timestamp
+                })
+            except:
+                continue
+        
+        # Sort dates and add to tree
+        for date_key in sorted(updates_by_date.keys(), reverse=True):
+            date_display = datetime.strptime(date_key, "%Y-%m-%d").strftime("%m/%d/%Y")
+            date_item = self.history_tree.insert("", tk.END, 
+                                                text="📅", 
+                                                values=(date_display, "", f"{len(updates_by_date[date_key])} updates"),
+                                                tags=("date_group",))
+            
+            # Sort updates by time (most recent first)
+            day_updates = sorted(updates_by_date[date_key], 
+                               key=lambda x: x["timestamp"], reverse=True)
+            
+            for update in day_updates:
+                comment_display = update["comment"][:50] + "..." if len(update["comment"]) > 50 else update["comment"]
+                
+                # Determine progress tag
+                progress_val = update["progress"]
+                progress_tag = "low_progress"
+                if progress_val >= 7:
+                    progress_tag = "high_progress"
+                elif progress_val >= 4:
+                    progress_tag = "medium_progress"
+                    
+                self.history_tree.insert(date_item, tk.END, 
+                                       text="🔄", 
+                                       values=(update["time"], 
+                                             f"{update['progress']}/10", 
+                                             comment_display),
+                                       tags=("update_item", progress_tag))
+            
+            # Expand today's updates by default
+            if date_key == datetime.now().strftime("%Y-%m-%d"):
+                self.history_tree.item(date_item, open=True)
         
     def create_menu(self):
         """Create menu bar"""
@@ -187,6 +395,8 @@ class ReminderApp:
         view_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="View", menu=view_menu)
         view_menu.add_command(label="Logs", command=self.show_logs)
+        view_menu.add_separator()
+        view_menu.add_command(label="Toggle Progress Panel", command=self.toggle_side_panel, accelerator="Ctrl+P")
         view_menu.add_separator()
         theme_submenu = tk.Menu(view_menu, tearoff=0)
         view_menu.add_cascade(label="Theme", menu=theme_submenu)
@@ -225,7 +435,10 @@ class ReminderApp:
             "due_date": due_date,
             "due_time": due_time,
             "status": "Pending",
-            "created": datetime.now().isoformat()
+            "created": datetime.now().isoformat(),
+            "comments": "",
+            "progress": 0,
+            "updates": []  # Thread-like update history
         }
         self.reminders.append(reminder)
         self.save_reminders()
@@ -284,7 +497,7 @@ class ReminderApp:
         # Clear existing items
         for item in self.tree.get_children():
             self.tree.delete(item)
-            
+        
         # Sort reminders by due date/time
         sorted_reminders = sorted(self.reminders, key=lambda x: f"{x['due_date']} {x['due_time']}")
         
@@ -300,13 +513,18 @@ class ReminderApp:
                 tags.append("pending")
             elif reminder["status"] == "Notified":
                 tags.append("notified")
+            
+            # Get progress with default value for existing reminders
+            progress = reminder.get("progress", 0)
+            progress_text = f"{progress}/10" if progress > 0 else "0/10"
                 
             self.tree.insert("", tk.END, values=(
                 index,  # Serial number
                 reminder["title"],
                 reminder["due_date"],
                 reminder["due_time"],
-                reminder["status"]
+                reminder["status"],
+                progress_text
             ), tags=tags)
             
         # Configure tags
@@ -314,6 +532,68 @@ class ReminderApp:
         self.tree.tag_configure("due_soon", foreground="orange", background="#fff3cd")
         self.tree.tag_configure("pending", foreground="darkred", background="#ffe6f0")
         self.tree.tag_configure("notified", foreground="purple", background="#f0e6ff")
+        
+    def on_tree_select(self, event):
+        """Handle tree selection changes and update side panel"""
+        selection = self.tree.selection()
+        if not selection:
+            self.update_history_panel()  # Clear side panel
+            return
+            
+        item = selection[0]
+        index = self.tree.index(item)
+        
+        if index < len(self.reminders):
+            # Sort reminders the same way as in refresh_list to get correct reminder
+            sorted_reminders = sorted(self.reminders, key=lambda x: f"{x['due_date']} {x['due_time']}")
+            reminder = sorted_reminders[index]
+            self.update_history_panel(reminder)
+        
+    def update_task_progress(self):
+        """Open update dialog for selected task"""
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showwarning("No Selection", "Please select a task to update.")
+            return
+            
+        item = selection[0]
+        index = self.tree.index(item)
+        
+        if index < len(self.reminders):
+            reminder = self.reminders[index]
+            # Open update dialog
+            UpdateProgressDialog(self.root, reminder, self.on_progress_updated)
+            
+    def on_progress_updated(self, updated_reminder):
+        """Callback when progress is updated from dialog"""
+        # Find and update the reminder in our list
+        for i, reminder in enumerate(self.reminders):
+            if (reminder["title"] == updated_reminder["title"] and 
+                reminder["due_date"] == updated_reminder["due_date"] and
+                reminder["due_time"] == updated_reminder["due_time"]):
+                
+                # Update the reminder
+                self.reminders[i] = updated_reminder
+                break
+                
+        # Save and refresh
+        self.save_reminders()
+        self.refresh_list()
+        
+        # Update side panel with new data
+        selection = self.tree.selection()
+        if selection:
+            item = selection[0]
+            index = self.tree.index(item)
+            if index < len(self.reminders):
+                sorted_reminders = sorted(self.reminders, key=lambda x: f"{x['due_date']} {x['due_time']}")
+                self.update_history_panel(sorted_reminders[index])
+        
+        # Show confirmation
+        progress = updated_reminder.get("progress", 0)
+        messagebox.showinfo("Updated!", 
+                           f"Progress updated to {progress}/10 for '{updated_reminder['title']}'")
+    
         
     def is_overdue(self, reminder):
         """Check if reminder is overdue"""
@@ -348,6 +628,16 @@ class ReminderApp:
                 import shutil
                 shutil.copy2(self.backup_file, self.data_file)
                 messagebox.showinfo("Data Recovery", "Your reminders have been recovered from backup!")
+                
+            # Update existing reminders with new fields if they don't exist
+            for reminder in self.reminders:
+                if "comments" not in reminder:
+                    reminder["comments"] = ""
+                if "progress" not in reminder:
+                    reminder["progress"] = 0
+                if "updates" not in reminder:
+                    reminder["updates"] = []
+                    
         except Exception:
             self.reminders = []
             
@@ -1443,6 +1733,168 @@ class ReminderDialog:
             
         # Create reminder
         self.callback(title, due_date, due_time)
+        self.dialog.destroy()
+
+
+class UpdateProgressDialog:
+    def __init__(self, parent, reminder, callback):
+        self.callback = callback
+        self.reminder = reminder.copy()  # Work with a copy
+        
+        # Create dialog window
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title(f"Update Progress - {reminder['title']}")
+        self.dialog.geometry("500x400")
+        self.dialog.resizable(False, False)
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        
+        # Center dialog
+        self.center_dialog()
+        
+        # Create widgets
+        self.create_dialog_widgets()
+        
+        # Focus on comments
+        self.comments_text.focus()
+        
+    def center_dialog(self):
+        """Center dialog on parent window"""
+        self.dialog.update_idletasks()
+        parent = self.dialog.master
+        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.dialog.winfo_width() // 2)
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.dialog.winfo_height() // 2)
+        self.dialog.geometry(f"+{x}+{y}")
+        
+    def create_dialog_widgets(self):
+        """Create dialog widgets"""
+        # Main container
+        main_container = ttk.Frame(self.dialog, padding="20")
+        main_container.pack(fill=tk.BOTH, expand=True)
+        
+        # Title section
+        title_frame = ttk.Frame(main_container)
+        title_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        ttk.Label(title_frame, text="📋 Update Task Progress", 
+                 font=("Arial", 14, "bold")).pack(anchor=tk.W)
+        ttk.Label(title_frame, text=f"Task: {self.reminder['title']}", 
+                 font=("Arial", 10)).pack(anchor=tk.W, pady=(5, 0))
+        ttk.Label(title_frame, text=f"Due: {self.reminder['due_date']} at {self.reminder['due_time']}", 
+                 font=("Arial", 9), foreground="gray").pack(anchor=tk.W)
+        
+        # Comments section
+        comments_frame = ttk.LabelFrame(main_container, text="💬 Comments & Notes", padding="10")
+        comments_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        
+        # Comments text widget with scrollbar
+        text_frame = ttk.Frame(comments_frame)
+        text_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.comments_text = tk.Text(text_frame, height=6, font=("Arial", 10), 
+                                    wrap=tk.WORD, bg="white")
+        comments_scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, 
+                                          command=self.comments_text.yview)
+        self.comments_text.configure(yscrollcommand=comments_scrollbar.set)
+        
+        self.comments_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        comments_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Load existing comments
+        existing_comments = self.reminder.get("comments", "")
+        if existing_comments:
+            self.comments_text.insert(tk.END, existing_comments)
+        
+        # Progress section
+        progress_frame = ttk.LabelFrame(main_container, text="📊 Progress Level", padding="10")
+        progress_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Progress slider
+        slider_frame = ttk.Frame(progress_frame)
+        slider_frame.pack(fill=tk.X)
+        
+        ttk.Label(slider_frame, text="Completion Level:").pack(anchor=tk.W)
+        
+        self.progress_var = tk.IntVar(value=self.reminder.get("progress", 0))
+        
+        progress_container = ttk.Frame(slider_frame)
+        progress_container.pack(fill=tk.X, pady=(5, 0))
+        
+        self.progress_slider = tk.Scale(progress_container, from_=0, to=10, 
+                                       orient=tk.HORIZONTAL, variable=self.progress_var, 
+                                       length=300, font=("Arial", 9))
+        self.progress_slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        self.progress_label = ttk.Label(progress_container, text=f"{self.progress_var.get()}/10", 
+                                       font=("Arial", 11, "bold"))
+        self.progress_label.pack(side=tk.RIGHT, padx=(10, 0))
+        
+        # Update progress label when slider changes
+        def update_progress_label(val):
+            self.progress_label.config(text=f"{val}/10")
+        self.progress_slider.config(command=update_progress_label)
+        
+        # History section
+        if self.reminder.get("updates"):
+            history_frame = ttk.LabelFrame(main_container, text="📜 Recent Updates", padding="10")
+            history_frame.pack(fill=tk.X, pady=(0, 15))
+            
+            history_text = tk.Text(history_frame, height=3, font=("Arial", 9), 
+                                  state=tk.DISABLED, bg="#f8f8f8")
+            history_text.pack(fill=tk.X)
+            
+            # Load update history
+            updates = self.reminder.get("updates", [])[-3:]  # Last 3 updates
+            if updates:
+                history_text.config(state=tk.NORMAL)
+                for update in updates:
+                    timestamp = datetime.fromisoformat(update["timestamp"]).strftime("%m/%d %H:%M")
+                    comment_snippet = update["comment"][:50] + "..." if len(update["comment"]) > 50 else update["comment"]
+                    history_text.insert(tk.END, f"🕒 {timestamp}: Progress {update['progress']}/10 - {comment_snippet}\n")
+                history_text.config(state=tk.DISABLED)
+        
+        # Buttons
+        button_frame = ttk.Frame(main_container)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        ttk.Button(button_frame, text="📝 Update Progress", 
+                  command=self.update_progress).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(button_frame, text="Cancel", 
+                  command=self.dialog.destroy).pack(side=tk.LEFT)
+        
+        # Bind Enter key to update
+        self.dialog.bind('<Return>', lambda e: self.update_progress())
+        
+    def update_progress(self):
+        """Update the reminder progress and comments"""
+        # Get current values
+        comments = self.comments_text.get("1.0", tk.END).strip()
+        progress = self.progress_var.get()
+        
+        # Update reminder data
+        self.reminder["comments"] = comments
+        self.reminder["progress"] = progress
+        
+        # Add to updates history (threading system)
+        if "updates" not in self.reminder:
+            self.reminder["updates"] = []
+        
+        update_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "progress": progress,
+            "comment": comments[:100] + "..." if len(comments) > 100 else comments,
+            "action": "progress_update"
+        }
+        self.reminder["updates"].append(update_entry)
+        
+        # Keep only last 10 updates
+        if len(self.reminder["updates"]) > 10:
+            self.reminder["updates"] = self.reminder["updates"][-10:]
+        
+        # Call callback with updated reminder
+        self.callback(self.reminder)
+        
+        # Close dialog
         self.dialog.destroy()
 
 

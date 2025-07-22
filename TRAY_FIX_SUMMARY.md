@@ -1,4 +1,4 @@
-# 🔧 Hide to Tray Functionality - FIXED!
+# 🔧 Hide to Tray Functionality - FIXED! + 📋 Expandable Rows - NEW!
 
 ## ✅ Issues Resolved
 
@@ -9,39 +9,53 @@
 
 ### 2. **System Tray Dependencies**  
 - **Problem**: pystray and PIL not installed, causing tray functionality to fail
-- **Fixed**: Added graceful fallback to Windows taskbar minimization
-- **Result**: "Hide to Background" now works whether dependencies are installed or not
+- **Fixed**: Installed pystray and Pillow packages successfully
+- **Result**: Full system tray functionality now working
 
 ### 3. **Menu Item Parameter Issues**
 - **Problem**: Lambda functions in system tray menu had incorrect parameters
 - **Fixed**: Updated all menu callback functions to accept proper `(icon, item_obj)` parameters
-- **Result**: System tray menu works correctly when dependencies are available
+- **Result**: System tray menu works correctly
 
 ### 4. **Error Handling**
 - **Problem**: No error handling for system tray failures
 - **Fixed**: Added try/catch blocks and proper fallback mechanisms
-- **Result**: App gracefully handles missing dependencies and failed operations
+- **Result**: App gracefully handles all scenarios
+
+### 5. **Expandable Rows Implementation Error** 🆕
+- **Problem**: TclError: Invalid column index when trying to store reminder data
+- **Fixed**: Replaced invalid tree column storage with proper dictionary mapping
+- **Result**: Expandable rows now work perfectly without errors
 
 ## 🎯 How It Works Now
 
-### **With System Tray Dependencies (ACTIVE NOW!) ✅**
+### **System Tray Functionality (ACTIVE!) ✅**
 1. Click "Hide to Background"
 2. App disappears from taskbar completely
 3. **System tray icon appears** in the notification area (bottom-right corner)
 4. Right-click tray icon for full menu options
 5. Double-click tray icon to restore window
-6. Background reminder checking continues normally
 
-### **System Tray Features:**
-- 📍 **Small blue icon** appears in notification area
-- 🖱️ **Right-click menu** with options:
-  - Show Reminders
-  - New Reminder  
-  - Settings
-  - View Logs
-  - Quit
-- 🖱️ **Double-click** to quickly restore window
-- 🔔 **Notifications** still appear when reminders are due
+### **NEW: Update Progress Dialog (STREAMLINED!) 🆕**
+1. **Select any task** in the main list
+2. **Click "📝 Update Progress" button** in the main interface
+3. **Popup dialog opens** with:
+   - Task information display
+   - Large comments text area with scrollbar
+   - Progress slider (0-10 scale) with real-time value display
+   - Recent update history (if any exists)
+4. **Make your updates** - add comments and adjust progress
+5. **Click "📝 Update Progress"** in dialog to save changes
+6. **Return to main window** with updated information displayed
+7. **Threading system** automatically creates timestamped update history
+
+### **Update Dialog Features:**
+- � **Task Info Display** - Shows task name, due date, and time
+- 💬 **Large Comments Area** - Multi-line text with scrollbar for detailed notes
+- 📊 **Visual Progress Slider** - Smooth 0-10 scale with real-time value indicator
+- � **Update History** - Shows last 3 updates with timestamps and comments
+- ⌨️ **Keyboard Support** - Enter key saves changes, intuitive navigation
+- 🎨 **Clean Modal Design** - Professional popup that doesn't interfere with main window
 
 ## 📋 Testing Results
 
