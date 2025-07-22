@@ -1,4 +1,2 @@
 @echo off
-title Reminder App
-python reminder_app.py
-pause
+pythonw reminder_app.py
