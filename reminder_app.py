@@ -170,6 +170,9 @@ class ReminderApp:
         # Bind tree selection to update side panel
         self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
         
+        # Bind double-click to open quick progress update
+        self.tree.bind("<Double-1>", self.on_tree_double_click)
+        
         # Scrollbar for treeview
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -190,20 +193,48 @@ class ReminderApp:
                               font=("Arial", 8), foreground="gray")
         info_label.pack(side=tk.LEFT, padx=(0, 10))
         
-        # Buttons
-        ttk.Button(buttons_frame, text="✅ Mark Complete", command=self.mark_complete).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(buttons_frame, text="📝 Update Progress", command=self.update_task_progress).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(buttons_frame, text="🗑️ Delete", command=self.delete_reminder).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(buttons_frame, text="🔄 Refresh", command=self.refresh_list).pack(side=tk.LEFT)
+        # Buttons with enhanced styling for Update Progress
+        ttk.Button(buttons_frame, text="✅ Mark Complete (Ctrl+M)", command=self.mark_complete).pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Create a custom styled Update button with animations
+        update_btn_font = font.Font(family="Arial", size=10, weight="bold")
+        update_button = tk.Button(buttons_frame, 
+                               text="📝 UPDATE PROGRESS (Ctrl+U)", 
+                               command=self.update_task_progress,
+                               bg="#4CAF50", fg="white", 
+                               activebackground="#45a049", activeforeground="white",
+                               cursor="hand2",
+                               relief=tk.RAISED, borderwidth=2)
+        update_button.pack(side=tk.LEFT, padx=(0, 10))
+        update_button['font'] = update_btn_font
+        
+        # Add hover effect to the update button
+        def on_enter_main(e):
+            update_button['bg'] = '#45a049'
+            update_button['relief'] = tk.SUNKEN
+            
+        def on_leave_main(e):
+            update_button['bg'] = '#4CAF50'
+            update_button['relief'] = tk.RAISED
+            
+        update_button.bind("<Enter>", on_enter_main)
+        update_button.bind("<Leave>", on_leave_main)
+        
+        ttk.Button(buttons_frame, text="🗑️ Delete (Ctrl+D)", command=self.delete_reminder).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(buttons_frame, text="🔄 Refresh (F5)", command=self.refresh_list).pack(side=tk.LEFT)
         
         # Restore/Show button (for when running in background)
-        ttk.Button(buttons_frame, text="Hide to Background", command=self.hide_window).pack(side=tk.RIGHT)
+        ttk.Button(buttons_frame, text="🔽 Hide to Background", command=self.hide_window).pack(side=tk.RIGHT)
         
         # Populate the list
         self.refresh_list()
         
         # Set up keyboard shortcuts
         self.root.bind('<Control-p>', lambda e: self.toggle_side_panel())
+        self.root.bind('<Control-u>', lambda e: self.update_task_progress())
+        self.root.bind('<Control-m>', lambda e: self.mark_complete())
+        self.root.bind('<Control-d>', lambda e: self.delete_reminder())
+        self.root.bind('<F5>', lambda e: self.refresh_list())
     
     def toggle_side_panel(self):
         """Toggle visibility of the progress history side panel"""
@@ -548,6 +579,25 @@ class ReminderApp:
             sorted_reminders = sorted(self.reminders, key=lambda x: f"{x['due_date']} {x['due_time']}")
             reminder = sorted_reminders[index]
             self.update_history_panel(reminder)
+            
+    def on_tree_double_click(self, event):
+        """Handle double-click on tree item - open quick progress update in main window"""
+        region = self.tree.identify("region", event.x, event.y)
+        if region != "cell":  # Ignore if not clicked on a cell
+            return
+            
+        selection = self.tree.selection()
+        if not selection:
+            return
+            
+        item = selection[0]
+        index = self.tree.index(item)
+        
+        if index < len(self.reminders):
+            # Get the reminder and open quick update
+            sorted_reminders = sorted(self.reminders, key=lambda x: f"{x['due_date']} {x['due_time']}")
+            reminder = sorted_reminders[index]
+            self.open_quick_update(reminder)
         
     def update_task_progress(self):
         """Open update dialog for selected task"""
@@ -560,7 +610,18 @@ class ReminderApp:
         index = self.tree.index(item)
         
         if index < len(self.reminders):
-            reminder = self.reminders[index]
+            # Sort reminders the same way as in refresh_list to get correct reminder
+            sorted_reminders = sorted(self.reminders, key=lambda x: f"{x['due_date']} {x['due_time']}")
+            reminder = sorted_reminders[index]
+            
+            # Flash the selected row to provide visual feedback
+            current_tags = self.tree.item(item, "tags")
+            self.tree.item(item, tags=current_tags + ("updating",))
+            self.tree.tag_configure("updating", background="#e0f7fa")
+            
+            # Schedule the flashing to end after a brief moment
+            self.root.after(200, lambda: self.tree.item(item, tags=current_tags))
+            
             # Open update dialog
             UpdateProgressDialog(self.root, reminder, self.on_progress_updated)
             
@@ -593,6 +654,333 @@ class ReminderApp:
         progress = updated_reminder.get("progress", 0)
         messagebox.showinfo("Updated!", 
                            f"Progress updated to {progress}/10 for '{updated_reminder['title']}'")
+    
+    def open_quick_update(self, reminder):
+        """Open floating window for progress updates"""
+        # If quick update is already open, close it first
+        if hasattr(self, 'quick_update_window') and self.quick_update_window:
+            self.close_quick_update()
+        
+        # Create a new top-level floating window
+        self.quick_update_window = tk.Toplevel(self.root)
+        self.quick_update_window.title(f"Update Progress: {reminder['title']}")
+        self.quick_update_window.geometry("550x320")
+        self.quick_update_window.resizable(True, True)
+        self.quick_update_window.minsize(450, 300)
+        
+        # Make it float on top of main window but allow interaction with main window
+        self.quick_update_window.transient(self.root)
+        
+        # Store reference to the reminder being edited
+        self.quick_update_reminder = reminder.copy()
+        
+        # Main container with padding
+        container = ttk.Frame(self.quick_update_window, padding="15")
+        container.pack(fill=tk.BOTH, expand=True)
+        
+        # Header with task title
+        header_frame = ttk.Frame(container)
+        header_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(header_frame, text="📋 Update Task Progress", 
+                 font=("Arial", 12, "bold")).pack(anchor=tk.W)
+        
+        # Task info
+        info_frame = ttk.Frame(container)
+        info_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Two-column layout for task info
+        ttk.Label(info_frame, text="Task:", font=("Arial", 9, "bold")).grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(info_frame, text=reminder['title'], 
+                 font=("Arial", 9)).grid(row=0, column=1, sticky=tk.W, padx=(10, 0))
+                 
+        ttk.Label(info_frame, text="Due:", font=("Arial", 9, "bold")).grid(row=1, column=0, sticky=tk.W, pady=(5, 0))
+        ttk.Label(info_frame, text=f"{reminder['due_date']} at {reminder['due_time']}", 
+                 font=("Arial", 9)).grid(row=1, column=1, sticky=tk.W, padx=(10, 0), pady=(5, 0))
+                 
+        ttk.Label(info_frame, text="Current Progress:", 
+                 font=("Arial", 9, "bold")).grid(row=2, column=0, sticky=tk.W, pady=(5, 0))
+        ttk.Label(info_frame, text=f"{reminder.get('progress', 0)}/10", 
+                 font=("Arial", 9)).grid(row=2, column=1, sticky=tk.W, padx=(10, 0), pady=(5, 0))
+        
+        # Progress slider
+        slider_frame = ttk.LabelFrame(container, text="Progress Level (0-10)")
+        slider_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Progress variable and slider
+        self.quick_progress_var = tk.IntVar(value=reminder.get("progress", 0))
+        slider = tk.Scale(slider_frame, from_=0, to=10, orient=tk.HORIZONTAL, 
+                         variable=self.quick_progress_var, length=500, 
+                         showvalue=False)  # Hide default value display
+        slider.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Progress value display with better styling
+        value_frame = ttk.Frame(slider_frame)
+        value_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+        
+        self.quick_progress_label = ttk.Label(value_frame, 
+                                           text=f"Selected: {self.quick_progress_var.get()}/10",
+                                           font=("Arial", 10, "bold"))
+        self.quick_progress_label.pack(side=tk.RIGHT)
+        
+        # Update progress label when slider changes
+        def update_quick_progress_label(val):
+            self.quick_progress_label.config(text=f"Selected: {val}/10")
+        slider.config(command=update_quick_progress_label)
+        
+        # Comments
+        comments_frame = ttk.LabelFrame(container, text="Comments & Notes")
+        comments_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        
+        # Text widget with scrollbar for comments
+        text_container = ttk.Frame(comments_frame)
+        text_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        self.quick_comments_text = tk.Text(text_container, height=4, width=50, wrap=tk.WORD)
+        comments_scrollbar = ttk.Scrollbar(text_container, command=self.quick_comments_text.yview)
+        self.quick_comments_text.config(yscrollcommand=comments_scrollbar.set)
+        
+        self.quick_comments_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        comments_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Insert existing comments
+        if reminder.get("comments"):
+            self.quick_comments_text.insert(tk.END, reminder.get("comments", ""))
+        
+        # Enhanced buttons section with prominent update button
+        button_section = ttk.Frame(container)
+        button_section.pack(fill=tk.X, pady=(5, 0))
+        
+        # Large Update Progress button that stands out
+        update_button_frame = ttk.LabelFrame(button_section, text="")
+        update_button_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Create a custom styled button with larger font
+        update_btn_font = font.Font(family="Arial", size=11, weight="bold")
+        update_button = tk.Button(update_button_frame, 
+                                text="📝 UPDATE PROGRESS", 
+                                command=self.save_quick_update,
+                                bg="#4CAF50", fg="white", 
+                                activebackground="#45a049", activeforeground="white",
+                                height=2, cursor="hand2",
+                                relief=tk.RAISED, borderwidth=2)
+        update_button.pack(fill=tk.X, padx=5, pady=5)
+        update_button['font'] = update_btn_font
+        
+        # Add hover effect to the update button with animation
+        self.pulse_animation_active = False
+        
+        def on_enter(e):
+            update_button['relief'] = tk.SUNKEN
+            # Start pulsing animation
+            self.pulse_animation_active = True
+            animate_button_pulse(update_button)
+            
+        def on_leave(e):
+            update_button['bg'] = '#4CAF50'
+            update_button['relief'] = tk.RAISED
+            # Stop animation
+            self.pulse_animation_active = False
+            
+        def animate_button_pulse(button):
+            if not self.pulse_animation_active:
+                return
+                
+            # Alternate between two shades of green
+            current_bg = button['bg']
+            if current_bg == '#4CAF50':
+                new_bg = '#45a049'
+            else:
+                new_bg = '#4CAF50'
+                
+            button['bg'] = new_bg
+            # Schedule next animation frame
+            self.quick_update_window.after(700, animate_button_pulse, button)
+            
+        update_button.bind("<Enter>", on_enter)
+        update_button.bind("<Leave>", on_leave)
+        
+        # Regular buttons frame at the bottom
+        buttons_frame = ttk.Frame(button_section)
+        buttons_frame.pack(fill=tk.X, pady=(0, 0))
+        
+        # Add additional action buttons with enhanced styling
+        complete_button = tk.Button(buttons_frame, text="✅ Mark Complete", 
+                                  command=lambda: self.mark_complete_from_update(),
+                                  bg="#3498db", fg="white",
+                                  activebackground="#2980b9", activeforeground="white",
+                                  cursor="hand2",
+                                  relief=tk.RAISED, borderwidth=2)
+        complete_button.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Add hover effect to complete button
+        def on_enter_complete(e):
+            complete_button['bg'] = '#2980b9'
+            complete_button['relief'] = tk.SUNKEN
+            
+        def on_leave_complete(e):
+            complete_button['bg'] = '#3498db'
+            complete_button['relief'] = tk.RAISED
+            
+        complete_button.bind("<Enter>", on_enter_complete)
+        complete_button.bind("<Leave>", on_leave_complete)
+                 
+        # Add close button with enhanced styling
+        close_button = tk.Button(buttons_frame, text="❌ Close", 
+                              command=self.close_quick_update, width=10,
+                              bg="#f0f0f0", fg="#333333",
+                              activebackground="#e0e0e0", activeforeground="#000000",
+                              cursor="hand2",
+                              relief=tk.RAISED, borderwidth=2)
+        close_button.pack(side=tk.RIGHT)
+        
+        # Add hover effect to close button
+        def on_enter_close(e):
+            close_button['bg'] = '#e0e0e0'
+            close_button['relief'] = tk.SUNKEN
+            
+        def on_leave_close(e):
+            close_button['bg'] = '#f0f0f0'
+            close_button['relief'] = tk.RAISED
+            
+        close_button.bind("<Enter>", on_enter_close)
+        close_button.bind("<Leave>", on_leave_close)
+        
+        # Set focus to comments text area
+        self.quick_comments_text.focus_set()
+        
+        # Add window closing handler
+        self.quick_update_window.protocol("WM_DELETE_WINDOW", self.close_quick_update)
+        
+        # Center window on screen
+        self.center_quick_update_window()
+        
+        # Bind keyboard shortcuts with tooltip hints
+        self.quick_update_window.bind("<Escape>", lambda e: self.close_quick_update())
+        self.quick_update_window.bind("<Return>", lambda e: self.save_quick_update())
+        self.quick_update_window.bind("<Control-s>", lambda e: self.save_quick_update())
+        self.quick_update_window.bind("<Control-m>", lambda e: self.mark_complete_from_update())
+        
+        # Update button text to show keyboard shortcuts
+        update_button['text'] = "📝 UPDATE PROGRESS (Enter)"
+        complete_button['text'] = "✅ Mark Complete (Ctrl+M)"
+        close_button['text'] = "❌ Close (Esc)"
+        
+        # Apply keyboard shortcuts to main window while dialog is open
+        self.root.bind("<Escape>", lambda e: self.close_quick_update())
+        self.root.bind("<Return>", lambda e: self.save_quick_update())
+        
+        # Focus on comments field
+        self.quick_comments_text.focus_set()
+    
+    def center_quick_update_window(self):
+        """Center the quick update window on screen"""
+        self.quick_update_window.update_idletasks()
+        
+        # Get screen and window dimensions
+        screen_width = self.quick_update_window.winfo_screenwidth()
+        screen_height = self.quick_update_window.winfo_screenheight()
+        window_width = self.quick_update_window.winfo_width()
+        window_height = self.quick_update_window.winfo_height()
+        
+        # Calculate position for center of screen
+        x = (screen_width // 2) - (window_width // 2)
+        y = (screen_height // 2) - (window_height // 2)
+        
+        # Set window position
+        self.quick_update_window.geometry(f"+{x}+{y}")
+    
+    def close_quick_update(self):
+        """Close floating update window"""
+        if hasattr(self, 'quick_update_window') and self.quick_update_window:
+            self.quick_update_window.destroy()
+            self.quick_update_window = None
+            self.quick_update_reminder = None
+    
+    def save_quick_update(self):
+        """Save changes from quick update window"""
+        if not hasattr(self, 'quick_update_reminder') or not self.quick_update_window:
+            self.close_quick_update()
+            return
+            
+        # Get values from form
+        progress = self.quick_progress_var.get()
+        comments = self.quick_comments_text.get("1.0", tk.END).strip()
+        
+        # Update reminder data
+        self.quick_update_reminder["progress"] = progress
+        self.quick_update_reminder["comments"] = comments
+        
+        # Add update history entry
+        if "updates" not in self.quick_update_reminder:
+            self.quick_update_reminder["updates"] = []
+            
+        update_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "progress": progress,
+            "comment": comments[:100] + "..." if len(comments) > 100 else comments,
+            "action": "floating_update"
+        }
+        self.quick_update_reminder["updates"].append(update_entry)
+        
+        # Call on_progress_updated to handle the update
+        self.on_progress_updated(self.quick_update_reminder)
+        
+        # Close the floating window
+        self.close_quick_update()
+        
+    def mark_complete_from_update(self):
+        """Mark the current task complete directly from update window"""
+        if not hasattr(self, 'quick_update_reminder') or not self.quick_update_window:
+            self.close_quick_update()
+            return
+            
+        # Create a copy of the reminder
+        completed_reminder = self.quick_update_reminder.copy()
+        completed_reminder["status"] = "Completed"
+        completed_reminder["completed_at"] = datetime.now().isoformat()
+        
+        # Get any final comments from the update window
+        comments = self.quick_comments_text.get("1.0", tk.END).strip()
+        if comments:
+            completed_reminder["comments"] = comments
+            
+            # Add a final update with completion note
+            if "updates" not in completed_reminder:
+                completed_reminder["updates"] = []
+                
+            update_entry = {
+                "timestamp": datetime.now().isoformat(),
+                "progress": 10,  # Mark as 10/10 when complete
+                "comment": f"Task completed. {comments[:80] + '...' if len(comments) > 80 else comments}",
+                "action": "completion"
+            }
+            completed_reminder["updates"].append(update_entry)
+        
+        # Add to logs for completed tasks
+        self.logs.append(completed_reminder)
+        
+        # Remove the task from active reminders
+        for i, reminder in enumerate(self.reminders):
+            if (reminder["title"] == completed_reminder["title"] and 
+                reminder["due_date"] == completed_reminder["due_date"] and
+                reminder["due_time"] == completed_reminder["due_time"]):
+                del self.reminders[i]
+                break
+        
+        # Save both files
+        self.save_reminders()
+        self.save_logs()
+        
+        # Close the update window
+        self.close_quick_update()
+        
+        # Refresh the main list
+        self.refresh_list()
+        
+        # Show confirmation message
+        messagebox.showinfo("Task Completed", 
+            f"'{completed_reminder['title']}' has been marked as complete and removed from the list.\n\n"
+            "You can view completed tasks in View → Logs.")
     
         
     def is_overdue(self, reminder):
@@ -1744,27 +2132,64 @@ class UpdateProgressDialog:
         # Create dialog window
         self.dialog = tk.Toplevel(parent)
         self.dialog.title(f"Update Progress - {reminder['title']}")
-        self.dialog.geometry("500x400")
-        self.dialog.resizable(False, False)
+        
+        # Create with minimal geometry initially - will be adjusted after widgets are created
+        self.dialog.geometry("700x600")  # Starting size
+        self.dialog.minsize(600, 500)    # Set minimum size to prevent too small dialogs
+        self.dialog.resizable(True, True)  # Allow resizing for better visibility
         self.dialog.transient(parent)
         self.dialog.grab_set()
         
-        # Center dialog
-        self.center_dialog()
-        
-        # Create widgets
+        # Create widgets first
         self.create_dialog_widgets()
+        
+        # Now size dialog based on content and center it
+        self.adjust_dialog_size()
+        self.center_dialog()
         
         # Focus on comments
         self.comments_text.focus()
         
-    def center_dialog(self):
-        """Center dialog on parent window"""
+    def adjust_dialog_size(self):
+        """Calculate and set appropriate dialog size based on content"""
+        # Update to ensure all widgets are properly sized
         self.dialog.update_idletasks()
-        parent = self.dialog.master
-        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.dialog.winfo_width() // 2)
-        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.dialog.winfo_height() // 2)
-        self.dialog.geometry(f"+{x}+{y}")
+        
+        # Get screen dimensions for reference
+        screen_width = self.dialog.winfo_screenwidth()
+        screen_height = self.dialog.winfo_screenheight()
+        
+        # Get the required size for all content
+        # We use winfo_reqwidth/height which tells us how much space widgets need
+        main_container = self.dialog.winfo_children()[0]  # Our main container
+        
+        # Calculate desired width and height based on content
+        required_width = min(main_container.winfo_reqwidth() + 40, int(screen_width * 0.8))
+        required_height = min(main_container.winfo_reqheight() + 40, int(screen_height * 0.8))
+        
+        # Ensure reasonable minimum dimensions
+        width = max(required_width, 650)
+        height = max(required_height, 600)
+        
+        # Set the calculated geometry
+        self.dialog.geometry(f"{width}x{height}")
+        
+    def center_dialog(self):
+        """Center dialog on screen (independent of parent window)"""
+        self.dialog.update_idletasks()
+        
+        # Get screen and window dimensions
+        screen_width = self.dialog.winfo_screenwidth()
+        screen_height = self.dialog.winfo_screenheight()
+        width = self.dialog.winfo_width()
+        height = self.dialog.winfo_height()
+        
+        # Calculate position for center of screen
+        x = (screen_width // 2) - (width // 2)
+        y = (screen_height // 2) - (height // 2)
+        
+        # Set position while preserving size
+        self.dialog.geometry(f"{width}x{height}+{x}+{y}")
         
     def create_dialog_widgets(self):
         """Create dialog widgets"""
@@ -1791,7 +2216,8 @@ class UpdateProgressDialog:
         text_frame = ttk.Frame(comments_frame)
         text_frame.pack(fill=tk.BOTH, expand=True)
         
-        self.comments_text = tk.Text(text_frame, height=6, font=("Arial", 10), 
+        # Increased height to make better use of the vertical space
+        self.comments_text = tk.Text(text_frame, height=8, font=("Arial", 10), 
                                     wrap=tk.WORD, bg="white")
         comments_scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, 
                                           command=self.comments_text.yview)
@@ -1804,6 +2230,51 @@ class UpdateProgressDialog:
         existing_comments = self.reminder.get("comments", "")
         if existing_comments:
             self.comments_text.insert(tk.END, existing_comments)
+            
+        # File attachment section
+        self.attachment_frame = ttk.LabelFrame(main_container, text="📎 File Attachments", padding="10")
+        self.attachment_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Display attachments list - increased height to show more items
+        self.attachments_listbox = tk.Listbox(self.attachment_frame, height=5, font=("Arial", 9),
+                                             bg="#f8f8f8", selectbackground="#d4e6f1")
+        self.attachments_listbox.pack(fill=tk.X, pady=(0, 10))
+        
+        # Load existing attachments if any
+        self.attachments = self.reminder.get("attachments", [])
+        for attachment in self.attachments:
+            self.attachments_listbox.insert(tk.END, f"{attachment['name']} ({attachment['type']})")
+        
+        # Attachment buttons
+        attachments_buttons_frame = ttk.Frame(self.attachment_frame)
+        attachments_buttons_frame.pack(fill=tk.X)
+        
+        # Add file button
+        add_file_btn = tk.Button(attachments_buttons_frame, text="📄 Attach File", 
+                               command=self.attach_file,
+                               bg="#f0f0f0", activebackground="#e0e0e0", cursor="hand2")
+        add_file_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Add image button
+        add_image_btn = tk.Button(attachments_buttons_frame, text="🖼️ Attach Image", 
+                                command=self.attach_image,
+                                bg="#f0f0f0", activebackground="#e0e0e0", cursor="hand2")
+        add_image_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # View attachment button
+        view_btn = tk.Button(attachments_buttons_frame, text="👁️ View Selected", 
+                           command=self.view_attachment,
+                           bg="#d4e6f1", activebackground="#a9cce3", cursor="hand2")
+        view_btn.pack(side=tk.LEFT, padx=(0, 10))
+        
+        # Remove attachment button
+        remove_btn = tk.Button(attachments_buttons_frame, text="❌ Remove Selected", 
+                             command=self.remove_attachment,
+                             bg="#ffcccc", activebackground="#ff9999", cursor="hand2")
+        remove_btn.pack(side=tk.RIGHT)
+        
+        # Double-click to view attachment
+        self.attachments_listbox.bind("<Double-1>", lambda e: self.view_attachment())
         
         # Progress section
         progress_frame = ttk.LabelFrame(main_container, text="📊 Progress Level", padding="10")
@@ -1835,36 +2306,334 @@ class UpdateProgressDialog:
         self.progress_slider.config(command=update_progress_label)
         
         # History section
-        if self.reminder.get("updates"):
-            history_frame = ttk.LabelFrame(main_container, text="📜 Recent Updates", padding="10")
-            history_frame.pack(fill=tk.X, pady=(0, 15))
+        history_frame = ttk.LabelFrame(main_container, text="📜 Recent Updates History", padding="10")
+        history_frame.pack(fill=tk.X, pady=(0, 15))
+        
+        # Create a frame for the history with scrollbar
+        history_scroll_frame = ttk.Frame(history_frame)
+        history_scroll_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Increased height to show more history entries
+        history_text = tk.Text(history_scroll_frame, height=6, font=("Arial", 9), 
+                              state=tk.DISABLED, bg="#f8f8f8", wrap=tk.WORD)
+        history_scrollbar = ttk.Scrollbar(history_scroll_frame, orient=tk.VERTICAL, 
+                                        command=history_text.yview)
+        history_text.configure(yscrollcommand=history_scrollbar.set)
+        
+        history_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        history_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Load update history
+        updates = self.reminder.get("updates", [])
+        
+        if updates:
+            history_text.config(state=tk.NORMAL)
+            for update in updates[-5:]:  # Show last 5 updates
+                timestamp = datetime.fromisoformat(update["timestamp"]).strftime("%m/%d %H:%M")
+                comment_snippet = update["comment"][:50] + "..." if len(update["comment"]) > 50 else update["comment"]
+                
+                # Check if update has attachments
+                attachment_info = ""
+                if update.get("has_attachments"):
+                    attachment_info = " [📎 Has attachments]"
+                    
+                # Add icon based on action type
+                icon = "🔄" if update.get("action") == "progress_update" else "✅"
+                
+                history_text.insert(tk.END, f"{icon} {timestamp}: Progress {update['progress']}/10 - {comment_snippet}{attachment_info}\n\n")
+            history_text.config(state=tk.DISABLED)
+        else:
+            # Show placeholder text if no history
+            history_text.config(state=tk.NORMAL)
+            history_text.insert(tk.END, "No update history available for this task yet.\nUpdates will appear here after you make changes.")
+            history_text.config(state=tk.DISABLED)
+        
+        # Enhanced buttons section with prominent update button
+        button_section = ttk.Frame(main_container)
+        button_section.pack(fill=tk.X, pady=(5, 0))
+        
+        # Large Update Progress button that stands out
+        update_button_frame = ttk.LabelFrame(button_section, text="")
+        update_button_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        # Create a custom styled button with larger font and enhanced appearance
+        update_btn_font = font.Font(family="Arial", size=14, weight="bold")
+        update_button = tk.Button(update_button_frame, 
+                                text="📝 UPDATE PROGRESS (Enter)", 
+                                command=self.update_progress,
+                                bg="#4CAF50", fg="white", 
+                                activebackground="#45a049", activeforeground="white",
+                                height=2, cursor="hand2",
+                                relief=tk.RAISED, borderwidth=4)  # Increased border width for more prominence
+        update_button.pack(fill=tk.X, padx=12, pady=10)  # Increased padding for more visual space
+        update_button['font'] = update_btn_font
+        
+        # Add a shadow effect using a frame behind the button (gives 3D effect)
+        update_button_frame.configure(relief=tk.RIDGE, borderwidth=2)
+        
+        # Start a gentle pulsing effect when the dialog opens to draw attention
+        self._pulse_count = 0
+        def initial_pulse():
+            if self._pulse_count < 3:  # Pulse 3 times only
+                current_bg = update_button['bg']
+                if current_bg == '#4CAF50':
+                    update_button['bg'] = '#45a049'
+                else:
+                    update_button['bg'] = '#4CAF50'
+                    self._pulse_count += 1
+                self.dialog.after(500, initial_pulse)
+        self.dialog.after(500, initial_pulse)  # Start pulsing after 500ms
+        
+        # Add hover effect to the update button with animation
+        self.pulse_animation_active = False
+        
+        def on_enter(e):
+            update_button['relief'] = tk.SUNKEN
+            # Start pulsing animation
+            self.pulse_animation_active = True
+            animate_button_pulse(update_button)
             
-            history_text = tk.Text(history_frame, height=3, font=("Arial", 9), 
-                                  state=tk.DISABLED, bg="#f8f8f8")
-            history_text.pack(fill=tk.X)
+        def on_leave(e):
+            update_button['bg'] = '#4CAF50'
+            update_button['relief'] = tk.RAISED
+            # Stop animation
+            self.pulse_animation_active = False
             
-            # Load update history
-            updates = self.reminder.get("updates", [])[-3:]  # Last 3 updates
-            if updates:
-                history_text.config(state=tk.NORMAL)
-                for update in updates:
-                    timestamp = datetime.fromisoformat(update["timestamp"]).strftime("%m/%d %H:%M")
-                    comment_snippet = update["comment"][:50] + "..." if len(update["comment"]) > 50 else update["comment"]
-                    history_text.insert(tk.END, f"🕒 {timestamp}: Progress {update['progress']}/10 - {comment_snippet}\n")
-                history_text.config(state=tk.DISABLED)
+        def animate_button_pulse(button):
+            if not hasattr(self, 'pulse_animation_active') or not self.pulse_animation_active:
+                return
+                
+            # Alternate between two shades of green
+            current_bg = button['bg']
+            if current_bg == '#4CAF50':
+                new_bg = '#45a049'
+            else:
+                new_bg = '#4CAF50'
+                
+            button['bg'] = new_bg
+            # Schedule next animation frame
+            self.dialog.after(700, animate_button_pulse, button)
+            
+        update_button.bind("<Enter>", on_enter)
+        update_button.bind("<Leave>", on_leave)
         
-        # Buttons
-        button_frame = ttk.Frame(main_container)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
+        # Regular buttons at the bottom
+        bottom_buttons_frame = ttk.Frame(button_section)
+        bottom_buttons_frame.pack(fill=tk.X, pady=(0, 0))
         
-        ttk.Button(button_frame, text="📝 Update Progress", 
-                  command=self.update_progress).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(button_frame, text="Cancel", 
-                  command=self.dialog.destroy).pack(side=tk.LEFT)
+        # Add Mark Complete button (like in floating window)
+        complete_button = tk.Button(bottom_buttons_frame, text="✅ Mark Complete (Ctrl+M)", 
+                                  command=lambda: self.mark_complete(),
+                                  bg="#3498db", fg="white",
+                                  activebackground="#2980b9", activeforeground="white",
+                                  cursor="hand2",
+                                  relief=tk.RAISED, borderwidth=2)
+        complete_button.pack(side=tk.LEFT, padx=(0, 10))
         
-        # Bind Enter key to update
+        # Add hover effect to complete button
+        def on_enter_complete(e):
+            complete_button['bg'] = '#2980b9'
+            complete_button['relief'] = tk.SUNKEN
+            
+        def on_leave_complete(e):
+            complete_button['bg'] = '#3498db'
+            complete_button['relief'] = tk.RAISED
+            
+        complete_button.bind("<Enter>", on_enter_complete)
+        complete_button.bind("<Leave>", on_leave_complete)
+        
+        # Add Cancel button with explicit styling
+        close_button = tk.Button(bottom_buttons_frame, text="❌ Cancel (Esc)", 
+                              command=self.dialog.destroy,
+                              bg="#f0f0f0", fg="#333333",
+                              activebackground="#e0e0e0", activeforeground="#000000",
+                              cursor="hand2",
+                              relief=tk.RAISED, borderwidth=2)
+        close_button.pack(side=tk.RIGHT)
+        
+        # Add hover effect to close button
+        def on_enter_close(e):
+            close_button['bg'] = '#e0e0e0'
+            close_button['relief'] = tk.SUNKEN
+            
+        def on_leave_close(e):
+            close_button['bg'] = '#f0f0f0'
+            close_button['relief'] = tk.RAISED
+            
+        close_button.bind("<Enter>", on_enter_close)
+        close_button.bind("<Leave>", on_leave_close)
+        
+        # Bind keyboard shortcuts
         self.dialog.bind('<Return>', lambda e: self.update_progress())
+        self.dialog.bind('<Escape>', lambda e: self.dialog.destroy())
+        self.dialog.bind('<Control-m>', lambda e: self.mark_complete())
         
+    def mark_complete(self):
+        """Mark the task as complete and close the dialog"""
+        # Get current values for any last-minute comments
+        comments = self.comments_text.get("1.0", tk.END).strip()
+        
+        # Update reminder data
+        self.reminder["status"] = "Completed"
+        self.reminder["completed_at"] = datetime.now().isoformat()
+        self.reminder["progress"] = 10  # Set to max progress
+        self.reminder["comments"] = comments
+        self.reminder["attachments"] = self.attachments  # Save attachments
+        
+        # Generate attachment summary
+        attachment_summary = ""
+        if self.attachments:
+            attachment_summary = f" with {len(self.attachments)} attachment{'s' if len(self.attachments) > 1 else ''}"
+        
+        # Add completion entry to updates history
+        if "updates" not in self.reminder:
+            self.reminder["updates"] = []
+            
+        update_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "progress": 10,
+            "comment": f"Task completed. {comments[:80] + '...' if len(comments) > 80 else comments}",
+            "action": "completion",
+            "has_attachments": bool(self.attachments)
+        }
+        self.reminder["updates"].append(update_entry)
+        
+        # Call the callback with the updated reminder
+        self.callback(self.reminder)
+        
+        # Close the dialog
+        self.dialog.destroy()
+        
+        # Show confirmation message
+        messagebox.showinfo("Task Completed", 
+                          f"'{self.reminder['title']}' has been marked as complete{attachment_summary}.\n\n"
+                          "The task will be moved to completed tasks.")
+    
+    def attach_file(self):
+        """Attach a file to the reminder"""
+        from tkinter import filedialog
+        import os
+        
+        file_path = filedialog.askopenfilename(
+            title="Select File to Attach",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("PDF files", "*.pdf"),
+                ("Microsoft Office", "*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if file_path:
+            # Get file info
+            file_name = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path)
+            file_type = os.path.splitext(file_path)[1].lower()
+            
+            # Create attachment record
+            attachment = {
+                "path": file_path,
+                "name": file_name,
+                "size": file_size,
+                "type": "document" if file_type in [".txt", ".pdf", ".doc", ".docx"] else "file",
+                "added_on": datetime.now().isoformat()
+            }
+            
+            # Add to attachments list
+            self.attachments.append(attachment)
+            
+            # Update listbox
+            self.attachments_listbox.insert(tk.END, f"{file_name} (document)")
+            
+            # Show confirmation
+            messagebox.showinfo("File Attached", f"File '{file_name}' attached successfully!")
+    
+    def attach_image(self):
+        """Attach an image to the reminder"""
+        from tkinter import filedialog
+        import os
+        
+        image_path = filedialog.askopenfilename(
+            title="Select Image to Attach",
+            filetypes=[
+                ("Image files", "*.png;*.jpg;*.jpeg;*.gif;*.bmp"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if image_path:
+            # Get file info
+            file_name = os.path.basename(image_path)
+            file_size = os.path.getsize(image_path)
+            
+            # Create attachment record
+            attachment = {
+                "path": image_path,
+                "name": file_name,
+                "size": file_size,
+                "type": "image",
+                "added_on": datetime.now().isoformat()
+            }
+            
+            # Add to attachments list
+            self.attachments.append(attachment)
+            
+            # Update listbox
+            self.attachments_listbox.insert(tk.END, f"{file_name} (image)")
+            
+            # Show confirmation
+            messagebox.showinfo("Image Attached", f"Image '{file_name}' attached successfully!")
+    
+    def view_attachment(self):
+        """View selected attachment"""
+        import os
+        import subprocess
+        import platform
+        
+        selected_idx = self.attachments_listbox.curselection()
+        
+        if not selected_idx:
+            messagebox.showinfo("No Selection", "Please select an attachment to view.")
+            return
+            
+        idx = selected_idx[0]
+        
+        # Get attachment and open with default application
+        if 0 <= idx < len(self.attachments):
+            attachment = self.attachments[idx]
+            file_path = attachment["path"]
+            
+            if not os.path.exists(file_path):
+                messagebox.showerror("Error", f"File not found: {file_path}")
+                return
+                
+            try:
+                # Open file with default application based on OS
+                if platform.system() == 'Windows':
+                    os.startfile(file_path)
+                elif platform.system() == 'Darwin':  # macOS
+                    subprocess.call(['open', file_path])
+                else:  # Linux
+                    subprocess.call(['xdg-open', file_path])
+            except Exception as e:
+                messagebox.showerror("Error Opening File", f"Could not open file: {str(e)}")
+    
+    def remove_attachment(self):
+        """Remove selected attachment"""
+        selected_idx = self.attachments_listbox.curselection()
+        
+        if not selected_idx:
+            messagebox.showinfo("No Selection", "Please select an attachment to remove.")
+            return
+            
+        idx = selected_idx[0]
+        
+        # Remove from list and listbox
+        if 0 <= idx < len(self.attachments):
+            removed = self.attachments.pop(idx)
+            self.attachments_listbox.delete(idx)
+            messagebox.showinfo("Attachment Removed", f"Attachment '{removed['name']}' removed.")
+    
     def update_progress(self):
         """Update the reminder progress and comments"""
         # Get current values
@@ -1874,16 +2643,23 @@ class UpdateProgressDialog:
         # Update reminder data
         self.reminder["comments"] = comments
         self.reminder["progress"] = progress
+        self.reminder["attachments"] = self.attachments
         
         # Add to updates history (threading system)
         if "updates" not in self.reminder:
             self.reminder["updates"] = []
         
+        # Generate attachment summary for update entry
+        attachment_summary = ""
+        if self.attachments:
+            attachment_summary = f" (with {len(self.attachments)} attachment{'s' if len(self.attachments) > 1 else ''})"
+        
         update_entry = {
             "timestamp": datetime.now().isoformat(),
             "progress": progress,
             "comment": comments[:100] + "..." if len(comments) > 100 else comments,
-            "action": "progress_update"
+            "action": "progress_update",
+            "has_attachments": bool(self.attachments)
         }
         self.reminder["updates"].append(update_entry)
         
@@ -1893,6 +2669,12 @@ class UpdateProgressDialog:
         
         # Call callback with updated reminder
         self.callback(self.reminder)
+        
+        # Show confirmation message with attachment info
+        if self.attachments:
+            messagebox.showinfo("Update Complete", 
+                              f"Progress updated to {progress}/10{attachment_summary}.\n\n"
+                              f"Added {len(self.attachments)} attachment{'s' if len(self.attachments) > 1 else ''}.")
         
         # Close dialog
         self.dialog.destroy()
