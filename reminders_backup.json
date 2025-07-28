@@ -5,7 +5,7 @@
     "due_time": "20:00",
     "status": "Notified",
     "created": "2025-07-22T19:36:27.960909",
-    "comments": "this is new update",
+    "comments": "this is new update this is the testing phase",
     "progress": 4,
     "updates": [
       {
@@ -19,29 +19,18 @@
         "progress": 4,
         "comment": "this is new update",
         "action": "quick_update"
-      }
-    ]
-  },
-  {
-    "title": "item list",
-    "due_date": "2025-07-23",
-    "due_time": "20:00",
-    "status": "Notified",
-    "created": "2025-07-22T19:36:27.960909",
-    "comments": "",
-    "progress": 0,
-    "updates": [
-      {
-        "timestamp": "2025-07-28T01:37:13.806988",
-        "progress": 3,
-        "comment": "this is new update",
-        "action": "quick_update"
       },
       {
-        "timestamp": "2025-07-28T01:37:31.533808",
+        "timestamp": "2025-07-28T13:41:20.154797",
         "progress": 4,
-        "comment": "this is new update",
-        "action": "quick_update"
+        "comment": "this is new update this is the testing phase",
+        "action": "floating_update"
+      },
+      {
+        "timestamp": "2025-07-28T15:07:30.043505",
+        "progress": 4,
+        "comment": "this is new update this is the testing phase",
+        "action": "floating_update"
       }
     ]
   }

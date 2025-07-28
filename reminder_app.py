@@ -12,6 +12,39 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+# Custom tooltip class for improved UX
+class ToolTip:
+    """
+    Create a tooltip for a given widget
+    """
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip = None
+        self.widget.bind("<Enter>", self.show_tooltip)
+        self.widget.bind("<Leave>", self.hide_tooltip)
+    
+    def show_tooltip(self, event=None):
+        x, y, _, _ = self.widget.bbox("insert")
+        x += self.widget.winfo_rootx() + 25
+        y += self.widget.winfo_rooty() + 25
+        
+        # Create a toplevel window
+        self.tooltip = tk.Toplevel(self.widget)
+        self.tooltip.wm_overrideredirect(True)  # Remove window decorations
+        self.tooltip.wm_geometry(f"+{x}+{y}")
+        
+        # Create label with tooltip text
+        label = tk.Label(self.tooltip, text=self.text, justify=tk.LEFT,
+                         background="#FFFFCC", relief="solid", borderwidth=1,
+                         font=("Arial", "8", "normal"))
+        label.pack(ipadx=3, ipady=2)
+    
+    def hide_tooltip(self, event=None):
+        if self.tooltip:
+            self.tooltip.destroy()
+            self.tooltip = None
+
 # Try to import system tray functionality
 try:
     import pystray
@@ -140,7 +173,60 @@ class ReminderApp:
         list_frame = ttk.Frame(self.paned_window)
         self.paned_window.add(list_frame, weight=2)
         list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(0, weight=1)
+        list_frame.rowconfigure(1, weight=1)  # Changed to 1 to make room for search bar
+        
+        # Search bar
+        search_frame = ttk.Frame(list_frame)
+        search_frame.grid(row=0, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 5))
+        search_frame.columnconfigure(0, weight=1)
+        
+        ttk.Label(search_frame, text="🔍 Search:").pack(side=tk.LEFT, padx=(0, 5))
+        self.search_var = tk.StringVar()
+        self.search_entry = ttk.Entry(search_frame, textvariable=self.search_var, 
+                                     font=("Arial", 10))
+        self.search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Add placeholder text effect
+        def on_focus_in(event):
+            if self.search_entry.get() == "Search reminders...":
+                self.search_entry.delete(0, tk.END)
+                self.search_entry.config(foreground="black")
+                
+        def on_focus_out(event):
+            if not self.search_entry.get():
+                self.search_entry.insert(0, "Search reminders...")
+                self.search_entry.config(foreground="gray")
+                
+        self.search_entry.insert(0, "Search reminders...")
+        self.search_entry.config(foreground="gray")
+        self.search_entry.bind("<FocusIn>", on_focus_in)
+        self.search_entry.bind("<FocusOut>", on_focus_out)
+        
+        # Search button and clear button
+        search_btn = ttk.Button(search_frame, text="Search", command=self.perform_search)
+        search_btn.pack(side=tk.LEFT, padx=5)
+        clear_btn = ttk.Button(search_frame, text="Clear", command=self.clear_search)
+        clear_btn.pack(side=tk.LEFT)
+        
+        # Add tooltips to search components
+        ToolTip(self.search_entry, "Search in title and comments (Ctrl+F to focus, Enter to search, Esc to clear)")
+        ToolTip(search_btn, "Filter reminders (Enter)")
+        ToolTip(clear_btn, "Clear search (Esc)")
+        
+        # Bind search entry to perform search on Enter key
+        self.search_entry.bind("<Return>", lambda e: self.perform_search())
+        
+        # Create a dynamic search experience (search as you type)
+        self.search_var.trace("w", lambda name, index, mode: self.perform_search())
+        
+        # Add Escape key binding to clear search
+        self.search_entry.bind("<Escape>", lambda e: self.clear_search())
+        
+        # Add Ctrl+F shortcut to focus search box
+        self.root.bind('<Control-f>', lambda e: self.search_entry.focus_set())
+        
+        # Add Ctrl+N shortcut to create a new reminder
+        self.root.bind('<Control-n>', lambda e: self.open_add_dialog())
         
         # Right panel - Progress history side window
         self.side_frame = ttk.LabelFrame(self.paned_window, text="📊 Progress History", padding="10")
@@ -173,13 +259,18 @@ class ReminderApp:
         # Bind double-click to open quick progress update
         self.tree.bind("<Double-1>", self.on_tree_double_click)
         
+        # Add keyboard shortcuts for tree navigation
+        self.tree.bind("<Return>", lambda e: self.update_task_progress())
+        self.tree.bind("<Delete>", lambda e: self.delete_reminder())
+        self.tree.bind("<space>", lambda e: self.toggle_completion())
+        
         # Scrollbar for treeview
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         
         # Grid treeview and scrollbar
-        self.tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
+        self.tree.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))  # Changed row from 0 to 1
+        scrollbar.grid(row=1, column=1, sticky=(tk.N, tk.S))  # Changed row from 0 to 1
         
         # Create side panel content
         self.create_side_panel()
@@ -452,6 +543,7 @@ class ReminderApp:
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="📧 Email Setup Guide", command=self.add_email_setup_guide)
+        help_menu.add_command(label="⌨ Keyboard Shortcuts", command=self.show_keyboard_shortcuts)
         help_menu.add_separator()
         help_menu.add_command(label="About", command=self.show_about)
         
@@ -523,14 +615,97 @@ class ReminderApp:
                 self.save_reminders()
                 self.refresh_list()
                 
+    def toggle_completion(self):
+        """Toggle the completion status of the selected reminder"""
+        selection = self.tree.selection()
+        if not selection:
+            return
+            
+        item = selection[0]
+        index = self.tree.index(item)
+        
+        if index < len(self.reminders):
+            # Toggle between Completed and Pending
+            current_status = self.reminders[index]["status"]
+            if current_status == "Completed":
+                self.reminders[index]["status"] = "Pending"
+                messagebox.showinfo("Status Updated", "Reminder marked as Pending")
+            else:
+                self.reminders[index]["status"] = "Completed"
+                self.reminders[index]["completed_at"] = datetime.now().isoformat()
+                messagebox.showinfo("Status Updated", "Reminder marked as Completed")
+                
+            self.save_reminders()
+            self.refresh_list()
+                
+    def perform_search(self):
+        """Filter reminders based on search term"""
+        # Don't search if the placeholder text is showing
+        if self.search_entry.get() == "Search reminders...":
+            return
+            
+        self.refresh_list()
+        # Focus on the treeview after search to allow immediate keyboard navigation
+        self.tree.focus_set()
+    
+    def clear_search(self):
+        """Clear search field and show all reminders"""
+        self.search_var.set("")
+        self.search_entry.focus_set()  # Keep focus on search box for new search
+        # Set placeholder text since the field is now empty
+        self.search_entry.insert(0, "Search reminders...")
+        self.search_entry.config(foreground="gray")
+        self.refresh_list()
+    
     def refresh_list(self):
-        """Refresh the reminders list"""
+        """Refresh the reminders list with optional filtering"""
         # Clear existing items
         for item in self.tree.get_children():
             self.tree.delete(item)
         
+        # Get search term (case-insensitive)
+        search_term = self.search_var.get().lower()
+        
+        # Ignore placeholder text
+        if search_term == "search reminders...":
+            search_term = ""
+            
+        # Filter reminders if search term is provided
+        filtered_reminders = self.reminders
+        if search_term:
+            filtered_reminders = [r for r in self.reminders if 
+                                 search_term in r['title'].lower() or 
+                                 search_term in r.get('comments', '').lower()]
+        
         # Sort reminders by due date/time
-        sorted_reminders = sorted(self.reminders, key=lambda x: f"{x['due_date']} {x['due_time']}")
+        sorted_reminders = sorted(filtered_reminders, key=lambda x: f"{x['due_date']} {x['due_time']}")
+        
+        # Configure the treeview tag for search result highlighting
+        if not hasattr(self, 'highlight_tag_configured'):
+            self.tree.tag_configure('search_match', background='#FFFFA0')  # Light yellow highlight
+            self.highlight_tag_configured = True
+            
+        # Display search results count if searching
+        if search_term:
+            # Create or update results count label
+            if not hasattr(self, 'search_results_label'):
+                self.search_results_label = ttk.Label(self.tree.master, font=("Arial", 8))
+                self.search_results_label.grid(row=2, column=0, sticky=tk.W, pady=(5, 0))
+            
+            result_count = len(sorted_reminders)
+            if result_count == 0:
+                self.search_results_label.config(
+                    text=f"No results found for '{search_term}'",
+                    foreground="red")
+            else:
+                self.search_results_label.config(
+                    text=f"Found {result_count} reminder{'s' if result_count != 1 else ''} matching '{search_term}'",
+                    foreground="green")
+            self.search_results_label.grid()
+        else:
+            # Hide the label when not searching
+            if hasattr(self, 'search_results_label'):
+                self.search_results_label.grid_remove()
         
         # Add reminders to tree with serial numbers
         for index, reminder in enumerate(sorted_reminders, 1):
@@ -548,6 +723,12 @@ class ReminderApp:
             # Get progress with default value for existing reminders
             progress = reminder.get("progress", 0)
             progress_text = f"{progress}/10" if progress > 0 else "0/10"
+            
+            # Apply search_match tag if this reminder matches search criteria
+            search_term = self.search_var.get().lower()
+            if search_term and (search_term in reminder['title'].lower() or 
+                               search_term in reminder.get('comments', '').lower()):
+                tags.append('search_match')
                 
             self.tree.insert("", tk.END, values=(
                 index,  # Serial number
@@ -1890,6 +2071,80 @@ Need help? The most common setup is Gmail with app passwords!
             "Built with Python & Tkinter\n\n"
             "Made by Swapnil Shandilya"
         )
+        
+    def show_keyboard_shortcuts(self):
+        """Display keyboard shortcuts help"""
+        shortcuts_window = tk.Toplevel(self.root)
+        shortcuts_window.title("Keyboard Shortcuts")
+        shortcuts_window.geometry("450x400")
+        shortcuts_window.resizable(False, False)
+        shortcuts_window.transient(self.root)
+        shortcuts_window.grab_set()
+        
+        # Center the window
+        self.center_window(shortcuts_window)
+        
+        # Main frame
+        main_frame = ttk.Frame(shortcuts_window, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        ttk.Label(
+            main_frame, 
+            text="⌨️ Keyboard Shortcuts", 
+            font=("Arial", 14, "bold")
+        ).pack(pady=(0, 15))
+        
+        # Shortcuts content
+        shortcuts_frame = ttk.Frame(main_frame)
+        shortcuts_frame.pack(fill=tk.BOTH, expand=True)
+        
+        shortcuts = [
+            ("Search", ""),
+            ("Ctrl+F", "Focus search box"),
+            ("Enter", "Execute search"),
+            ("Esc", "Clear search"),
+            ("", ""),
+            ("Navigation", ""),
+            ("↑/↓", "Navigate through reminders"),
+            ("Enter", "Update/edit selected reminder"),
+            ("Space", "Toggle reminder completion status"),
+            ("Delete", "Delete selected reminder"),
+            ("", ""),
+            ("Other", ""),
+            ("Ctrl+N", "New reminder"),
+            ("Alt+F4", "Exit application"),
+        ]
+        
+        for i, (key, description) in enumerate(shortcuts):
+            if description == "":
+                # This is a section header
+                ttk.Label(
+                    shortcuts_frame, 
+                    text=key, 
+                    font=("Arial", 11, "bold")
+                ).grid(row=i, column=0, sticky=tk.W, pady=(10, 5))
+            else:
+                # Key column
+                ttk.Label(
+                    shortcuts_frame, 
+                    text=key, 
+                    font=("Courier New", 10, "bold")
+                ).grid(row=i, column=0, sticky=tk.W, padx=(20, 0), pady=3)
+                
+                # Description column
+                ttk.Label(
+                    shortcuts_frame, 
+                    text=description, 
+                    font=("Arial", 10)
+                ).grid(row=i, column=1, sticky=tk.W, padx=15, pady=3)
+        
+        # Close button
+        ttk.Button(
+            main_frame, 
+            text="Close", 
+            command=shortcuts_window.destroy
+        ).pack(pady=(15, 0))
         
     def quit_app(self):
         """Quit the application completely"""
