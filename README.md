@@ -2,6 +2,8 @@
 
 A feature-rich, lightweight Python GUI application built with tkinter for managing reminders with advanced functionality.
 
+![alt text](image.png)
+
 ## Features
 
 ### Core Features
